@@ -22,3 +22,4 @@ jobs:
       - run: pytest
       - run: python -m durable_outbox.demo
       - run: python -m build
+      - run: python scripts/wheel_smoke.py dist/*.whl
