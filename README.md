@@ -64,6 +64,7 @@ pyright
 pytest
 python -m durable_outbox.demo
 python -m build            # wheel + sdist in dist/
+python scripts/wheel_smoke.py dist/*.whl   # install the wheel in a fresh venv, run CLI + demo
 ```
 
 The demo is synthetic: fixed data, a manual clock, a fake transport, a throwaway temp database,
