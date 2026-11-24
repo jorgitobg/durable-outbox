@@ -10,7 +10,7 @@ One SQLite table, one row per idempotency key. Status is one of:
 |-----------|-----------------------------------------------------------------|
 | `pending` | ready once `available_at <= now`                                |
 | `claimed` | leased to a worker until `lease_expires_at` (exclusive)         |
-| `done`    | acknowledged; row is kept so later duplicate enqueues dedupe    |
+| `done`    | acknowledged; row is kept so later duplicate enqueues dedupe (until an explicit purge) |
 | `dead`    | `max_attempts` exhausted; kept for inspection, never reclaimed  |
 
 `attempts` counts claims (each successful `claim()` increments it).
@@ -137,4 +137,9 @@ promise to parse arbitrary SQLite files or to auto-repair corrupted databases.
 * The database is **plaintext**. Payloads, keys and error strings are stored unencrypted with
   whatever file permissions your umask gives. No encryption, redaction or secret management is
   provided; do not enqueue secrets you would not write to disk in the clear.
-* Done rows are never purged by this library (no retention/compaction yet).
+* Rows are never purged automatically. `purge(older_than_seconds=..., statuses=..., dry_run=True)`
+  deletes `done`/`dead` rows whose `created_at < now - older_than_seconds`, inside one
+  `BEGIN IMMEDIATE` transaction; `dry_run` (the default) only counts. `pending`/`claimed` rows
+  cannot be selected. The cutoff is item age, not completion time, and a purged key is forgotten:
+  enqueueing it again creates a new pending row. Database format is unchanged. Rationale:
+  [adr/0001-purge-terminal-rows.md](adr/0001-purge-terminal-rows.md).

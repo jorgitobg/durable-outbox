@@ -8,6 +8,7 @@ import json
 import sqlite3
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from .errors import OutboxError
@@ -39,11 +40,17 @@ def _build_parser() -> argparse.ArgumentParser:
     add("dead")
     p = add("recover")
     p.add_argument("--max-attempts", type=int)
+    p = add("purge")
+    p.add_argument("--older-than-seconds", type=float, required=True)
+    p.add_argument("--status", action="append", required=True, help="done or dead; repeat for both")
+    p.add_argument("--execute", action="store_true", help="really delete (default: dry run)")
     return parser
 
 
 def _run(args: argparse.Namespace) -> Any:
     max_attempts: int | None = getattr(args, "max_attempts", None)
+    if args.command == "purge" and not Path(args.db).exists():
+        raise ValueError(f"outbox database does not exist: {args.db}")
     with Outbox(
         args.db, max_attempts=max_attempts, create=args.command not in {"stats", "dead"}
     ) as box:
@@ -64,6 +71,13 @@ def _run(args: argparse.Namespace) -> Any:
                 return [dataclasses.asdict(i) for i in box.dead_letters()]
             case "recover":
                 return {"recovered": box.recover_expired()}
+            case "purge":
+                matched = box.purge(
+                    older_than_seconds=args.older_than_seconds,
+                    statuses=args.status,
+                    dry_run=not args.execute,
+                )
+                return {"dry_run": not args.execute, "matched": matched}
             case _:
                 raise AssertionError(args.command)  # pragma: no cover
 

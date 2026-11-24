@@ -45,12 +45,23 @@ with Outbox("outbox.sqlite3", max_attempts=5, base_delay=1.0, max_delay=60.0) as
 * **Plaintext database.** No encryption, redaction or secret management. Don't store secrets.
 * Ordering is by readiness time then insertion; it is not strict FIFO once retries happen.
 * Writers serialize on SQLite's write lock; no throughput numbers are claimed or measured.
-* No purge/retention of `done`/`dead` rows, no priorities, no jitter, no metrics, no async API.
+* Retention is manual and opt-in: `Outbox.purge(...)` / `durable-outbox purge` delete `done`/`dead` rows by item age (`created_at`, not completion time); dry run by default. A purged key can be enqueued again and the work repeats. See [ADR 0001](docs/adr/0001-purge-terminal-rows.md). No automatic retention, no priorities, no jitter, no metrics, no async API.
 * The CLI uses the real clock and is a thin convenience; it is not a daemon.
 * Retry settings are stored once per database; reopening and CLI commands inherit them. An
   explicit conflicting setting is rejected. `stats`/`dead` are read-only and never create a file.
 * GitHub Actions exercises lint, strict typing, tests, the synthetic demo and package builds on
   Python 3.12 and 3.13; see [.github/workflows/ci.yml](.github/workflows/ci.yml).
+
+### Purging old rows (opt-in)
+
+```bash
+# dry run: counts rows created more than 30 days ago that are done
+durable-outbox purge --db outbox.sqlite3 --older-than-seconds 2592000 --status done
+# really delete them
+durable-outbox purge --db outbox.sqlite3 --older-than-seconds 2592000 --status done --execute
+```
+
+`pending` and `claimed` rows are never deleted. Choose a cutoff well above your longest item lifetime and duplicate-enqueue window.
 
 Full contract: [docs/semantics.md](docs/semantics.md).
 
