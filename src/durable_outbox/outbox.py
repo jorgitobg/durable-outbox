@@ -9,7 +9,7 @@ import os
 import secrets
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -81,6 +81,7 @@ MAX_DELAY_SECONDS = 365 * 86400.0
 MAX_ATTEMPTS = 2**31 - 1
 MAX_CLOCK_SECONDS = 1e12
 _VERSION = 1
+_PURGEABLE = frozenset({"done", "dead"})
 _COLUMNS = (
     "item_id",
     "key",
@@ -517,6 +518,47 @@ class Outbox:
         if row is None:
             return None
         return Item(int(row[0]), str(row[1]), json.loads(row[2]), row[3], int(row[4]), row[5])
+
+    def purge(
+        self,
+        *,
+        older_than_seconds: float,
+        statuses: Iterable[str],
+        dry_run: bool = True,
+    ) -> int:
+        """Delete (or, by default, only count) ``done``/``dead`` rows created long ago.
+
+        A row qualifies when ``created_at < now - older_than_seconds`` and its status is in
+        ``statuses``. Only ``done`` and ``dead`` may be selected; ``pending`` and ``claimed``
+        rows are never touched. Age is the item's age (``created_at``), not time since it
+        finished. A purged key is forgotten, so enqueueing it again creates a new row.
+        Returns the number of matching rows (deleted unless ``dry_run``).
+        """
+        age = _finite_nonneg("older_than_seconds", older_than_seconds)
+        if isinstance(statuses, str):
+            raise ValueError("statuses must be an iterable of 'done'/'dead', not a string")
+        chosen = tuple(sorted(set(statuses)))
+        if not chosen or not set(chosen) <= _PURGEABLE:
+            raise ValueError(f"statuses must be a non-empty subset of {sorted(_PURGEABLE)}")
+        marks = ",".join("?" * len(chosen))
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            cutoff = self._now() - age
+            where = f"status IN ({marks}) AND created_at < ?"
+            params = (*chosen, cutoff)
+            count = int(
+                self._conn.execute(f"SELECT COUNT(*) FROM outbox WHERE {where}", params).fetchone()[
+                    0
+                ]
+            )
+            if not dry_run and count:
+                self._conn.execute(f"DELETE FROM outbox WHERE {where}", params)
+            self._conn.execute("COMMIT")
+            return count
+        except BaseException:
+            if self._conn.in_transaction:
+                self._conn.execute("ROLLBACK")
+            raise
 
     def stats(self) -> dict[str, int]:
         counts = {"pending": 0, "claimed": 0, "done": 0, "dead": 0}
