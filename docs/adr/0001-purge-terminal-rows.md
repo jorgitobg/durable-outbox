@@ -28,7 +28,9 @@ schema drift, so adding a column would be a format change with no migration path
 * One `BEGIN IMMEDIATE` transaction counts and deletes, so concurrent workers on their own
   connections either see a row before the purge or not at all.
 * Returns the number of matching rows (dry run) or deleted rows.
-* Purge is never automatic or background. It never creates a missing database.
+* Purge is never automatic or background. The CLI rejects a missing database up front. This is a
+  check-then-open: a database deleted in the instant between the check and the open would be
+  recreated empty (nothing is purged from it); the library API follows the normal `create` rules.
 
 ## Consequences
 
